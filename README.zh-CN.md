@@ -67,6 +67,30 @@ node codex-theme.mjs apply
 
 启动日志会写入 `tmp/codex-launch-*.log`，便于排查启动问题。
 
+### 从 Dock 一键启动（macOS）
+
+仓库提供了 AppleScript 启动器 `script/Codex Theme.applescript`。它可以在不打开终端的情况下执行 `apply`，因此可以打包成 macOS App 并固定到 Dock。
+
+1. 查询 Node.js 的绝对路径：
+
+   ```sh
+   command -v node
+   ```
+
+2. 打开 `script/Codex Theme.applescript`，根据自己的仓库位置和 Node.js 安装位置修改 `projectDirectory` 与 `nodeExecutable`。
+3. 编译并安装启动器：
+
+   ```sh
+   osacompile -o "Codex Theme.app" "script/Codex Theme.applescript"
+   mv "Codex Theme.app" /Applications/
+   ```
+
+4. 在 Finder 中打开“应用程序”，将 **Codex Theme** 拖到 Dock。
+
+点击 Dock 图标后，启动器会在需要时使用本地调试端口启动 Codex，并自动应用主题。首次启动时，如果 Codex 已在运行，应用可能会退出后重新打开，请先保存正在编辑的内容。启动器日志写入 `tmp/codex-theme-dock-launch.log`；执行失败时会弹出错误提示。
+
+此启动器是本仓库提供的本地便捷工具，不是 Codex 官方功能。如果移动了仓库或 Node.js 可执行文件，需要更新上述两个路径并重新编译 App。
+
 ## 状态说明
 
 `status` 命令会输出 JSON，其中常用字段包括：

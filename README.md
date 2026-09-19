@@ -67,6 +67,30 @@ node codex-theme.mjs apply
 
 Launch logs are written to `tmp/codex-launch-*.log` for troubleshooting.
 
+### One-click launch from the Dock (macOS)
+
+The repository includes an AppleScript launcher at `script/Codex Theme.applescript`. It runs `apply` without opening Terminal, so you can package it as a macOS app and keep it in the Dock.
+
+1. Find the absolute path to Node.js:
+
+   ```sh
+   command -v node
+   ```
+
+2. Open `script/Codex Theme.applescript` and update `projectDirectory` and `nodeExecutable` to match your checkout and Node.js installation.
+3. Compile and install the launcher:
+
+   ```sh
+   osacompile -o "Codex Theme.app" "script/Codex Theme.applescript"
+   mv "Codex Theme.app" /Applications/
+   ```
+
+4. Open **Applications** in Finder and drag **Codex Theme** to the Dock.
+
+Clicking the Dock icon launches Codex with the local debugging port when necessary and applies the theme. On the first launch, an already-running Codex app may quit and reopen; save any work in progress first. Launcher output is written to `tmp/codex-theme-dock-launch.log`, and failures are shown in a dialog.
+
+This launcher is a local convenience provided by this repository, not an official Codex feature. If you move the repository or Node.js executable, update the two paths and rebuild the app.
+
 ## Status Output
 
 The `status` command returns JSON. Common fields include:
