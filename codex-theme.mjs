@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, openSync, closeSync } from "node:fs";
+import { mkdirSync, openSync, closeSync, readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { codexLaunchEnv } from "./script/codex-launch-env.mjs";
 
@@ -25,6 +25,23 @@ async function run(file, args) {
     env: codexLaunchEnv(),
   });
   return stdout.trim();
+}
+
+async function sidebarWallpaperDataUrl() {
+  try {
+    const source = await run("/usr/bin/osascript", [
+      "-e", 'tell application "System Events" to get picture of current desktop',
+    ]);
+    if (!source) return "none";
+    const output = new URL("./tmp/sidebar-wallpaper.jpg", import.meta.url);
+    await run("/usr/bin/sips", [
+      "-Z", "960", "-s", "format", "jpeg", "-s", "formatOptions", "72",
+      source, "--out", output.pathname,
+    ]);
+    return `url("data:image/jpeg;base64,${readFileSync(output).toString("base64")}")`;
+  } catch {
+    return "none";
+  }
 }
 
 async function verifyOfficialBundle() {
@@ -186,6 +203,17 @@ const markdownSelector = '[class*="MarkdownRoot"], [class*="markdown-root"], .ma
 const themeCss = `
 :root, [data-theme="dark"] { --md-text:#e9e9e9; --md-text-strong:#fff; --md-text-muted:#a5a5a5; --md-border:rgba(255,255,255,.11); --md-border-strong:rgba(255,255,255,.19); --md-accent:#8ab4ff; --md-accent-soft:rgba(138,180,255,.12); --md-heading-1:rgb(231,77,71); --md-heading-2:rgb(215,148,64); --md-heading-3:rgb(7,170,246); --md-heading-4:rgb(163,110,251); --md-heading-5:rgb(109,215,215); --md-heading-6:rgb(175,191,5); --md-code-bg:#0c0c0c; --md-code-text:#d9e5ff; --md-table-bg:#161616; --md-table-head-bg:#222; --md-radius-sm:6px; --md-radius-md:10px; --md-content-width:860px; }
 [data-theme="light"] { --md-text:#242424; --md-text-strong:#111; --md-text-muted:#5f6368; --md-border:rgba(0,0,0,.12); --md-border-strong:rgba(0,0,0,.2); --md-accent:#0969da; --md-accent-soft:rgba(9,105,218,.08); --md-heading-1:#c9372c; --md-heading-2:#9a5700; --md-heading-3:#006b9f; --md-heading-4:#7047a8; --md-heading-5:#147879; --md-heading-6:#626c00; --md-code-bg:#f6f8fa; --md-code-text:#244a7c; --md-table-bg:#fff; --md-table-head-bg:#f1f3f5; }
+/* One glass layer behind the title controls and sidebar prevents overlap seams. */
+:root, [data-theme="dark"] { --local-sidebar-overlay:linear-gradient(180deg, rgba(28,27,32,.947), rgba(26,31,42,.923) 48%, rgba(29,27,33,.947)); }
+[data-theme="light"] { --local-sidebar-overlay:linear-gradient(rgba(245,245,245,.927), rgba(238,242,248,.907)); }
+[data-app-shell-frame] { background-color:var(--color-token-main-surface-primary) !important; }
+[data-app-shell-frame]::before { content:""; position:absolute; inset:0 auto 0 0; z-index:0; width:calc(var(--codex-sidebar-preferred-width) * ${SCALE}); pointer-events:none; background-image:var(--local-sidebar-overlay), __LOCAL_SIDEBAR_WALLPAPER__; background-repeat:no-repeat; background-size:100% 100%, var(--local-screen-width, 100vw) var(--local-screen-height, 100vh); background-position:0 0, var(--local-wallpaper-x, 0) var(--local-wallpaper-y, 0); -webkit-backdrop-filter:blur(30px) saturate(1.15); backdrop-filter:blur(30px) saturate(1.15); }
+[data-app-shell-frame][data-app-shell-sidebar-open="false"]::before { width:calc(var(--app-shell-navigation-rail-width) * ${SCALE}); }
+aside.app-shell-left-panel, aside.app-shell-left-panel .sidebar-navigation { background:transparent !important; -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }
+aside.app-shell-left-panel .text-default { color:rgba(252,252,252,.68) !important; }
+[data-theme="light"] aside.app-shell-left-panel .text-default { color:rgba(28,28,30,.68) !important; }
+[data-app-shell-workspace-row] > [class*="_PageSurface_"] { box-shadow:none !important; }
+[data-app-shell-main-titlebar] > .w-px.bg-border { display:none !important; }
 aside.app-shell-left-panel, aside[data-app-shell-left-panel-appearance], [data-pip-home-surface="thread-summary-panel"] { zoom:${SCALE} !important; }
 [class*="MarkdownRoot"], .markdown-body, .prose, [data-testid*="markdown"], main article { max-width:var(--md-content-width); margin-inline:auto; color:var(--md-text); font-size:15px; line-height:1.75; letter-spacing:.01em; }
 [class~="group"][class~="flex"][class~="min-w-0"][class~="flex-col"] > [class*="MarkdownRoot"] { width:100% !important; max-width:100% !important; margin-inline:0 !important; text-align:left !important; }
@@ -290,6 +318,7 @@ const statusExpression = `(${themeStatus})(${JSON.stringify(STYLE_ID)}, ${JSON.s
 
 function installTheme(styleId, stateKey, css, editorSelector) {
   window[stateKey]?.observer?.disconnect();
+  if (window[stateKey]?.positionTimer) clearInterval(window[stateKey].positionTimer);
   // CodeMirror highlight classes are generated. Discover semantic declarations
   // instead of pinning a session-specific class such as .ͼ8 or .ͼo.
   const tokenCss = () => {
@@ -313,8 +342,15 @@ function installTheme(styleId, stateKey, css, editorSelector) {
     state.tokenRules = rules.length;
     return rules.join('\n');
   };
-  const state = { observer: null, tokenRules: 0, usageRowsInitialized: new WeakSet() };
+  const state = { observer: null, positionTimer: null, tokenRules: 0, usageRowsInitialized: new WeakSet() };
   let style, lastSheetCount = -1, dynamic = '';
+  const syncWallpaperPosition = () => {
+    const root = document.documentElement;
+    root.style.setProperty('--local-screen-width', screen.width + 'px');
+    root.style.setProperty('--local-screen-height', screen.height + 'px');
+    root.style.setProperty('--local-wallpaper-x', (-window.screenX) + 'px');
+    root.style.setProperty('--local-wallpaper-y', (-window.screenY) + 'px');
+  };
   const decorateLists = () => {
     for (const line of document.querySelectorAll(editorSelector + ' .cm-markdown-list-item')) {
       const marker = [...line.children].find(node =>
@@ -356,23 +392,29 @@ function installTheme(styleId, stateKey, css, editorSelector) {
     }
     const text = css + '\n' + dynamic;
     if (style.textContent !== text) style.textContent = text;
+    syncWallpaperPosition();
     decorateLists();
     expandUsageRemaining();
   };
   ensure();
   state.observer = new MutationObserver(ensure);
   state.observer.observe(document, { childList: true, subtree: true, characterData: true });
+  state.positionTimer = setInterval(syncWallpaperPosition, 250);
   window[stateKey] = state;
 }
 
-const applyExpression = `(() => {
-  (${installTheme})(${JSON.stringify(STYLE_ID)}, ${JSON.stringify(STATE_KEY)}, ${JSON.stringify(themeCss + editorCss)}, ${JSON.stringify(editorSelector)});
-  return { theme:${JSON.stringify(THEME_NAME)}, scale:${SCALE}, ...(${statusExpression}) };
-})()`;
+function applyExpression(css) {
+  return `(() => {
+    (${installTheme})(${JSON.stringify(STYLE_ID)}, ${JSON.stringify(STATE_KEY)}, ${JSON.stringify(css)}, ${JSON.stringify(editorSelector)});
+    return { theme:${JSON.stringify(THEME_NAME)}, scale:${SCALE}, ...(${statusExpression}) };
+  })()`;
+}
 
 const restoreExpression = `(() => {
   window[${JSON.stringify(STATE_KEY)}]?.observer?.disconnect();
+  if (window[${JSON.stringify(STATE_KEY)}]?.positionTimer) clearInterval(window[${JSON.stringify(STATE_KEY)}].positionTimer);
   delete window[${JSON.stringify(STATE_KEY)}];
+  for (const name of ['--local-screen-width','--local-screen-height','--local-wallpaper-x','--local-wallpaper-y']) document.documentElement.style.removeProperty(name);
   const style = document.getElementById(${JSON.stringify(STYLE_ID)});
   style?.remove();
   return { removed:Boolean(style), ...(${statusExpression}) };
@@ -431,7 +473,7 @@ async function main() {
   }
 
   const expression = command === "apply"
-    ? applyExpression
+    ? applyExpression((themeCss + editorCss).replace("__LOCAL_SIDEBAR_WALLPAPER__", await sidebarWallpaperDataUrl()))
     : command === "restore" ? restoreExpression : statusExpression;
   const results = await operate(expression);
   console.log(JSON.stringify({ command, port: PORT, results }, null, 2));
