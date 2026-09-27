@@ -35,7 +35,9 @@ async function sidebarWallpaperDataUrl() {
     if (!source) return "none";
     const output = new URL("./tmp/sidebar-wallpaper.jpg", import.meta.url);
     await run("/usr/bin/sips", [
-      "-Z", "960", "-s", "format", "jpeg", "-s", "formatOptions", "72",
+      // Deliberately downsample the wallpaper so the sidebar keeps only broad
+      // color fields instead of revealing recognizable image details.
+      "-Z", "120", "-s", "format", "jpeg", "-s", "formatOptions", "68",
       source, "--out", output.pathname,
     ]);
     return `url("data:image/jpeg;base64,${readFileSync(output).toString("base64")}")`;
