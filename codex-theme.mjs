@@ -13,6 +13,7 @@ const HOST = "127.0.0.1";
 const PORT = 9341;
 const STYLE_ID = "local-codex-readable-theme";
 const SCALE = 0.90;
+const SIDEBAR_MIN_WIDTH = 160; // Original 240px minimum reduced by one third.
 const THEME_NAME = "readable";
 const command = process.argv[2] ?? "status";
 
@@ -209,9 +210,18 @@ const themeCss = `
 :root, [data-theme="dark"] { --local-sidebar-overlay:linear-gradient(180deg, rgba(28,27,32,.947), rgba(26,31,42,.923) 48%, rgba(29,27,33,.947)); }
 [data-theme="light"] { --local-sidebar-overlay:linear-gradient(rgba(245,245,245,.927), rgba(238,242,248,.907)); }
 [data-app-shell-frame] { background-color:var(--color-token-main-surface-primary) !important; }
-[data-app-shell-frame]::before { content:""; position:absolute; inset:0 auto 0 0; z-index:0; width:calc(var(--codex-sidebar-preferred-width) * ${SCALE}); pointer-events:none; background-image:var(--local-sidebar-overlay), __LOCAL_SIDEBAR_WALLPAPER__; background-repeat:no-repeat; background-size:100% 100%, var(--local-screen-width, 100vw) var(--local-screen-height, 100vh); background-position:0 0, var(--local-wallpaper-x, 0) var(--local-wallpaper-y, 0); -webkit-backdrop-filter:blur(30px) saturate(1.15); backdrop-filter:blur(30px) saturate(1.15); }
-[data-app-shell-frame][data-app-shell-sidebar-open="false"]::before { width:calc(var(--app-shell-navigation-rail-width) * ${SCALE}); }
+[data-app-shell-frame]::before { content:""; position:absolute; inset:0 auto 0 0; z-index:0; width:var(--local-sidebar-background-width, calc(var(--app-shell-navigation-rail-width, 0px) * ${SCALE})); pointer-events:none; background-image:var(--local-sidebar-overlay), __LOCAL_SIDEBAR_WALLPAPER__; background-repeat:no-repeat; background-size:100% 100%, var(--local-screen-width, 100vw) var(--local-screen-height, 100vh); background-position:0 0, var(--local-wallpaper-x, 0) var(--local-wallpaper-y, 0); -webkit-backdrop-filter:blur(30px) saturate(1.15); backdrop-filter:blur(30px) saturate(1.15); }
+/* Use the actual panel width, including fixed navigation rails on plugin pages. */
+:root { --spacing-token-sidebar:clamp(${SIDEBAR_MIN_WIDTH}px, var(--codex-sidebar-preferred-width,275px), min(520px, calc(100vw - 320px))) !important; }
+[data-local-sidebar-expanded="true"][data-local-sidebar-sized="true"] aside.app-shell-left-panel,
+[data-local-sidebar-expanded="true"][data-local-sidebar-sized="true"] aside.app-shell-left-panel > div:first-child > div,
+[data-local-sidebar-expanded="true"][data-local-sidebar-sized="true"] [data-app-shell-header-slot="start"][data-app-shell-header-obstacle] { width:var(--local-sidebar-width) !important; min-width:0 !important; }
+[data-local-sidebar-expanded="true"][data-local-sidebar-sized="true"] [data-app-shell-main-titlebar][style*="inset-inline: calc("] { inset-inline-start:var(--local-sidebar-width) !important; }
 aside.app-shell-left-panel, aside.app-shell-left-panel .sidebar-navigation { background:transparent !important; -webkit-backdrop-filter:none !important; backdrop-filter:none !important; }
+/* The hover preview floats over page content, so it needs an opaque surface. */
+aside.app-shell-left-panel[data-slate-sidebar-peeking="true"] .sidebar-navigation { background:var(--color-token-main-surface-primary, var(--color-surface)) !important; }
+/* Cover both the popover bottom margin and the shell bottom gutter. */
+aside.app-shell-left-panel[data-slate-sidebar-peeking="true"] [data-slate-sidebar-content] { margin-block-end:calc(-1 * var(--spacing) / ${SCALE}) !important; border-end-start-radius:0 !important; border-end-end-radius:0 !important; }
 aside.app-shell-left-panel .text-default { color:rgba(252,252,252,.68) !important; }
 [data-theme="light"] aside.app-shell-left-panel .text-default { color:rgba(28,28,30,.68) !important; }
 [data-app-shell-workspace-row] > [class*="_PageSurface_"] { box-shadow:none !important; }
@@ -322,7 +332,8 @@ function themeStatus(styleId, stateKey, markdownSelector, editorSelector) {
 
 const statusExpression = `(${themeStatus})(${JSON.stringify(STYLE_ID)}, ${JSON.stringify(STATE_KEY)}, ${JSON.stringify(markdownSelector)}, ${JSON.stringify(editorSelector)})`;
 
-function installTheme(styleId, stateKey, css, editorSelector) {
+function installTheme(styleId, stateKey, css, editorSelector, sidebarMinWidth) {
+  window[stateKey]?.cleanupSidebar?.();
   window[stateKey]?.observer?.disconnect();
   if (window[stateKey]?.positionTimer) clearInterval(window[stateKey].positionTimer);
   // CodeMirror highlight classes are generated. Discover semantic declarations
@@ -350,7 +361,61 @@ function installTheme(styleId, stateKey, css, editorSelector) {
   };
   const state = { observer: null, positionTimer: null, tokenRules: 0, usageRowsInitialized: new WeakSet() };
   let style, lastSheetCount = -1, dynamic = '';
+  const expanded = frame => frame.dataset.appShellPageSidebar === 'true' ||
+    (frame.dataset.appShellPageSurface !== 'true' && frame.dataset.appShellSidebarOpen === 'true');
+  let sidebarWidth = null, drag = null;
+  const syncSidebar = () => {
+    for (const frame of document.querySelectorAll('[data-app-shell-frame]')) {
+      const panel = frame.querySelector('aside.app-shell-left-panel');
+      const isExpanded = expanded(frame);
+      frame.dataset.localSidebarExpanded = String(isExpanded);
+      frame.dataset.localSidebarSized = String(sidebarWidth !== null);
+      if (sidebarWidth !== null) frame.style.setProperty('--local-sidebar-width', sidebarWidth + 'px');
+      const zoom = Number(getComputedStyle(frame).zoom) || 1;
+      const width = panel && getComputedStyle(panel).display !== 'none'
+        ? panel.getBoundingClientRect().width / zoom : 0;
+      frame.style.setProperty('--local-sidebar-background-width', width + 'px');
+    }
+  };
+  const resizeStart = event => {
+    const handle = event.target.closest?.('aside.app-shell-left-panel [role="separator"]');
+    const panel = handle?.closest('aside.app-shell-left-panel');
+    const frame = panel?.closest('[data-app-shell-frame]');
+    if (event.button !== 0 || !frame || !expanded(frame)) return;
+    const zoom = (Number(getComputedStyle(frame).zoom) || 1) * (Number(getComputedStyle(panel).zoom) || 1);
+    drag = { x:event.clientX, width:panel.getBoundingClientRect().width / zoom, zoom,
+      direction:getComputedStyle(frame).direction === 'rtl' ? -1 : 1 };
+    event.preventDefault(); event.stopImmediatePropagation();
+  };
+  const resizeMove = event => {
+    if (!drag) return;
+    sidebarWidth = Math.max(sidebarMinWidth, Math.min(520, window.innerWidth / drag.zoom - 320,
+      drag.width + (event.clientX - drag.x) * drag.direction / drag.zoom));
+    syncSidebar();
+    event.preventDefault(); event.stopImmediatePropagation();
+  };
+  const resizeEnd = event => {
+    if (!drag) return;
+    drag = null;
+    event.preventDefault(); event.stopImmediatePropagation();
+  };
+  document.addEventListener('pointerdown', resizeStart, true);
+  document.addEventListener('pointermove', resizeMove, true);
+  document.addEventListener('pointerup', resizeEnd, true);
+  document.addEventListener('pointercancel', resizeEnd, true);
+  state.cleanupSidebar = () => {
+    document.removeEventListener('pointerdown', resizeStart, true);
+    document.removeEventListener('pointermove', resizeMove, true);
+    document.removeEventListener('pointerup', resizeEnd, true);
+    document.removeEventListener('pointercancel', resizeEnd, true);
+    for (const frame of document.querySelectorAll('[data-app-shell-frame]')) {
+      delete frame.dataset.localSidebarExpanded; delete frame.dataset.localSidebarSized;
+      frame.style.removeProperty('--local-sidebar-width');
+      frame.style.removeProperty('--local-sidebar-background-width');
+    }
+  };
   const syncWallpaperPosition = () => {
+    syncSidebar();
     const root = document.documentElement;
     root.style.setProperty('--local-screen-width', screen.width + 'px');
     root.style.setProperty('--local-screen-height', screen.height + 'px');
@@ -411,12 +476,13 @@ function installTheme(styleId, stateKey, css, editorSelector) {
 
 function applyExpression(css) {
   return `(() => {
-    (${installTheme})(${JSON.stringify(STYLE_ID)}, ${JSON.stringify(STATE_KEY)}, ${JSON.stringify(css)}, ${JSON.stringify(editorSelector)});
+    (${installTheme})(${JSON.stringify(STYLE_ID)}, ${JSON.stringify(STATE_KEY)}, ${JSON.stringify(css)}, ${JSON.stringify(editorSelector)}, ${SIDEBAR_MIN_WIDTH});
     return { theme:${JSON.stringify(THEME_NAME)}, scale:${SCALE}, ...(${statusExpression}) };
   })()`;
 }
 
 const restoreExpression = `(() => {
+  window[${JSON.stringify(STATE_KEY)}]?.cleanupSidebar?.();
   window[${JSON.stringify(STATE_KEY)}]?.observer?.disconnect();
   if (window[${JSON.stringify(STATE_KEY)}]?.positionTimer) clearInterval(window[${JSON.stringify(STATE_KEY)}].positionTimer);
   delete window[${JSON.stringify(STATE_KEY)}];

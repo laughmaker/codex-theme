@@ -108,6 +108,12 @@ The `status` command returns JSON. Common fields include:
 
 `applied: true` means that the theme was injected; it does not necessarily mean that Markdown content is currently open. CodeMirror virtualizes long documents, so DOM node counts do not represent the total number of elements in a file.
 
+## Layout update (2026-09-30)
+
+- Keep the resize handle at its native width; give the Home hover preview an opaque background so page content does not show through.
+- Sidebar drag minimum reduced from 240px to 160px (144px with the existing 90% scale). The injected pointer handler bypasses the native minimum; its width lasts for the current theme session. `restore` removes the handler and restores native sizing.
+- The background layer follows the actual left panel width. Pages with only a navigation rail, including third-party plugin pages, no longer show a wide background block behind the back/forward controls.
+
 ## Known Limitations
 
 - Light and dark palettes are supported; custom or future Codex appearance modes may require additional color mappings
