@@ -189,7 +189,9 @@ async function evaluate(target, expression) {
         if (message.id !== 1) return;
         clearTimeout(timer);
         if (message.error || message.result?.exceptionDetails) {
-          reject(new Error(message.error?.message ?? message.result.exceptionDetails.text ?? "页面脚本执行失败"));
+          reject(new Error(message.error?.message ??
+            message.result.exceptionDetails.exception?.description ??
+            message.result.exceptionDetails.text ?? "页面脚本执行失败"));
         } else resolve(message.result?.result?.value);
       });
       socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate",
@@ -503,11 +505,24 @@ async function verifiedCodexTargets(timeoutMs = 15_000) {
   throw new Error("没有找到可信的 Codex 主页面。");
 }
 
+async function waitForPageReady(target, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ready = await evaluate(target, `Boolean(document.documentElement && document.head && document.body && document.readyState !== 'loading')`);
+    if (ready) return;
+    await sleep(300);
+  }
+  throw new Error("Codex 页面加载超时，尚未准备好应用主题。");
+}
+
 async function operate(expression) {
   const pages = await verifiedCodexTargets();
   const results = await Promise.all(pages.map(async (target) => {
     const identity = { targetId: target.id, targetKind: target.type, targetUrl: target.url };
-    try { return { ...identity, ...await evaluate(target, expression) }; }
+    try {
+      await waitForPageReady(target);
+      return { ...identity, ...await evaluate(target, expression) };
+    }
     catch (error) { return { ...identity, error: error.message }; }
   }));
   if (results.some(result => result.error)) process.exitCode = 1;
