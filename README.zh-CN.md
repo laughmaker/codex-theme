@@ -22,6 +22,32 @@
 - 打开账户菜单时默认展开 `Usage remaining`，仍可点击折叠
 - 支持随时查看状态或撤销主题
 
+## 额度用尽后继续使用第三方模型
+
+官方 Codex/Work 的 5 小时或周额度用尽时，Codex 会禁用发送按钮，而且与所选模型无关——切到第三方模型也点不动。这是 Codex 桌面端的纯客户端判定：其依据是 app-server 下发的 `rate_limit.limit_reached`，而 `openai_base_url` 指向的本地代理仍能正常服务第三方模型请求。
+
+`script/codex-unblock-third-party.mjs` 在页面内常驻一个观察器，只在「额度已用尽 **且** 当前模型不是官方模型」时解除这一界面门禁：
+
+```sh
+# 安装 / 更新观察器
+node script/codex-unblock-third-party.mjs apply
+
+# 查看状态（是否安装、改写次数、当前模型与发送按钮状态）
+node script/codex-unblock-third-party.mjs status
+
+# 移除观察器，恢复原生行为
+node script/codex-unblock-third-party.mjs restore
+```
+
+行为边界：
+
+- 官方模型（`gpt-*`、`codex/*`、`o1`/`o3`/`o4`）仍保持门禁，由服务端返回真实限流错误。
+- 只解除界面门禁，不增加任何官方额度。
+- 账户菜单中的用量数字来自服务端快照，仍会如实显示额度已用尽。
+- Codex 每次刷新用量状态后，观察器会在约 0.4 秒内重新解除，可持续生效到 Codex 退出。
+
+> 观察器依赖当前 Codex 的内部 DOM/React 结构，升级后若失效，请先运行 `status` 查看 `installed` 是否仍为 `true`、`lastError` 是否有值。重新执行 `apply` 即可覆盖安装。
+
 ## 工作方式
 
 主题通过本机 Chrome DevTools Protocol（CDP）向官方 Codex 应用注入 CSS：

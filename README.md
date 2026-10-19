@@ -22,6 +22,32 @@ A local readability theme for the Codex desktop app. It improves Markdown render
 - Expands `Usage remaining` by default when the account menu opens while keeping it collapsible
 - Supports status inspection and one-command removal
 
+## Continuing with third-party models after the limit
+
+When the official Codex/Work 5-hour or weekly allowance runs out, Codex disables the send button regardless of the selected model — switching to a third-party model does not help. This is a pure client-side decision driven by the `rate_limit.limit_reached` value sent by the app server, while the local proxy behind `openai_base_url` still serves third-party model requests normally.
+
+`script/codex-unblock-third-party.mjs` keeps a small observer in the page that lifts this UI gate only when the allowance is exhausted **and** the selected model is not an official one:
+
+```sh
+# Install or refresh the observer
+node script/codex-unblock-third-party.mjs apply
+
+# Inspect state (installed, rewrite count, current model, send button)
+node script/codex-unblock-third-party.mjs status
+
+# Remove the observer and restore native behavior
+node script/codex-unblock-third-party.mjs restore
+```
+
+Boundaries:
+
+- Official models (`gpt-*`, `codex/*`, `o1`/`o3`/`o4`) stay gated and still surface the real server-side rate-limit error.
+- Only the UI gate is lifted; no official quota is granted.
+- Usage numbers in the account menu come from a server snapshot and still report the allowance as spent.
+- Each time Codex refreshes its usage status, the observer lifts the gate again within roughly 0.4s, so it keeps working until Codex exits.
+
+> The observer depends on Codex's internal DOM/React structure. After an app update, run `status` to check whether `installed` is still `true` and whether `lastError` is set, then re-run `apply`.
+
 ## How It Works
 
 The theme uses the local Chrome DevTools Protocol (CDP) to inject CSS into the official Codex app:

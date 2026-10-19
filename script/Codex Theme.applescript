@@ -3,12 +3,13 @@ property nodeExecutable : "/opt/homebrew/bin/node"
 
 on run
 	set themeScript to projectDirectory & "/codex-theme.mjs"
+	set unblockScript to projectDirectory & "/script/codex-unblock-third-party.mjs"
 	set logFile to projectDirectory & "/tmp/codex-theme-dock-launch.log"
-	set shellCommand to "/bin/mkdir -p " & quoted form of (projectDirectory & "/tmp") & " && " & quoted form of nodeExecutable & " " & quoted form of themeScript & " apply > " & quoted form of logFile & " 2>&1"
+	set shellCommand to "/bin/mkdir -p " & quoted form of (projectDirectory & "/tmp") & " && " & quoted form of nodeExecutable & " " & quoted form of themeScript & " apply > " & quoted form of logFile & " 2>&1 && " & quoted form of nodeExecutable & " " & quoted form of unblockScript & " apply >> " & quoted form of logFile & " 2>&1"
 
 	try
 		do shell script shellCommand
-		display notification "Codex 已启动，主题已应用。" with title "Codex Theme"
+		display notification "Codex 已启动，主题与第三方模型解锁已应用。" with title "Codex Theme"
 	on error errorMessage number errorNumber
 		set logExcerpt to ""
 		try
