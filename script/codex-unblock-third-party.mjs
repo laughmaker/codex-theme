@@ -36,6 +36,8 @@ const command = process.argv[2] ?? "status";
 // 官方模型前缀：这些仍走官方额度，保持门禁，交由服务端返回真实限流错误。
 const OFFICIAL_PREFIXES = ["gpt-", "codex/", "o1", "o3", "o4"];
 const CHECK_INTERVAL = 400;
+// 守护进程的页面轮询间隔。
+const WATCH_INTERVAL = 2000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -93,57 +95,147 @@ function installUnblock(stateKey, officialPrefixes, interval) {
   const isOfficial = (model) => {
     if (!model) return true; // 无法判定模型时保守处理，保持门禁。
     const slug = String(model);
-    return officialPrefixes.some((prefix) => slug === prefix || slug.startsWith(prefix));
+    // 前缀后必须是非字母数字，避免把 opencode-zen 之类的第三方名误判为官方 o1/o3。
+    return officialPrefixes.some((prefix) => {
+      if (!slug.startsWith(prefix)) return false;
+      const rest = slug.slice(prefix.length);
+      return rest === "" || !/[a-z0-9]/i.test(rest[0]);
+    });
   };
 
   const state = {
     installedAt: Date.now(),
     rewrites: 0,
     lastRewriteAt: 0,
+    lastDispatched: 0,
     lastError: null,
+    models: [],
+    scans: 0,
     active: true,
   };
 
-  // 渲染器把用量状态挂在某个组件的 usageBannerProps 上；
-  // 遍历组件树即可拿到该状态对象的真实引用。
-  const scan = () => {
+  // 渲染器把用量状态挂在多个组件的 usageBannerProps 上。
+  // 首页与每个会话各自持有一份，因此必须全部收集。
+  // 完整遍历 React 树开销较大，因此结果会被缓存，仅在缓存失效时重扫。
+  const cache = { usages: [], models: [], expiresAt: 0 };
+
+  const scanAll = () => {
+    const now = Date.now();
+    if (now < cache.expiresAt) return cache.usages;
     const root = globalThis.__codexRoot?._internalRoot?.current;
-    if (!root) return null;
+    if (!root) return [];
     const seen = new Set();
-    let result = null;
+    const found = [];
     const walk = (node, depth) => {
-      if (!node || seen.has(node) || result || depth > 700) return;
+      if (!node || seen.has(node) || depth > 900) return;
       seen.add(node);
       try {
         const props = node.memoizedProps;
-        if (props?.usageBannerProps?.rateLimit) { result = props.usageBannerProps; return; }
+        if (props?.usageBannerProps?.rateLimit) found.push(props.usageBannerProps);
       } catch { /* 忽略跨版本结构差异 */ }
       walk(node.child, depth + 1);
       walk(node.sibling, depth);
     };
     walk(root.child, 0);
-    return result;
+    // 同一份 usageBannerProps 会被多个组件共享，按对象去重。
+    cache.usages = [...new Set(found)];
+    cache.expiresAt = now + 2000;
+    state.scans += 1;
+    return cache.usages;
+  };
+
+  // 当前实际使用的模型以模型选择器为准：
+  // usageBannerProps.selectedModel 是默认模型，不会随用户切换而更新。
+  const currentModel = () => {
+    const now = Date.now();
+    if (now < cache.expiresAt && cache.models.length) return cache.models[0];
+    const root = globalThis.__codexRoot?._internalRoot?.current;
+    if (!root) return null;
+    const seen = new Set();
+    let model = null;
+    const walk = (node, depth) => {
+      if (!node || seen.has(node) || model || depth > 900) return;
+      seen.add(node);
+      try {
+        const props = node.memoizedProps;
+        const picked = props?.selectedPowerSelection?.model ?? props?.selectedLabelCandidate?.model;
+        if (typeof picked === "string" && picked) { model = picked; return; }
+      } catch { /* 忽略 */ }
+      walk(node.child, depth + 1);
+      walk(node.sibling, depth);
+    };
+    walk(root.child, 0);
+    cache.models = model ? [model] : [];
+    return model;
+  };
+
+  // Codex 还会额外把发送按钮本身的 disabled 属性置为 true。
+  // 按钮的 disabled 由 composer 内部的提交状态决定，与用量状态不是同一处，
+  // 因此这里同时把按钮恢复为可点击，React 下一次重绘时会被再次修正。
+  const enableSendButton = () => {
+    let touched = false;
+    for (const button of document.querySelectorAll('[data-codex-composer-root] button')) {
+      if (button.getAttribute("aria-label") !== "Send") continue;
+      if (button.disabled) {
+        button.disabled = false;
+        button.removeAttribute("disabled");
+        button.setAttribute("aria-disabled", "false");
+        touched = true;
+      }
+      const propsKey = Object.keys(button).find((key) => key.startsWith("__reactProps$"));
+      if (propsKey) {
+        const props = button[propsKey];
+        if (props?.disabled) {
+          button[propsKey] = { ...props, disabled: false, "aria-disabled": "false" };
+          touched = true;
+        }
+      }
+    }
+    return touched;
   };
 
   const tick = () => {
     if (!state.active) return;
     try {
-      const usage = scan();
-      const status = usage?.rateLimit;
-      if (!status?.rate_limit) return;
-      // 仅在额度确实用尽时介入，避免无谓改写。
-      if (status.rate_limit.limit_reached !== true) return;
-      // 官方模型保持门禁，由服务端返回真实限流错误。
-      if (isOfficial(usage.selectedModel)) return;
-      status.rate_limit.limit_reached = false;
-      status.rate_limit.allowed = true;
-      if (status.rate_limit_upsell) status.rate_limit_upsell = null;
-      usage.sendBlocked = false;
-      usage.sendBlockReason = null;
-      state.rewrites += 1;
-      state.lastRewriteAt = Date.now();
+      const pickerModel = currentModel();
+      let changed = false;
+      for (const usage of scanAll()) {
+        const status = usage?.rateLimit;
+        if (!status?.rate_limit) continue;
+        // 每个 composer 实例各自持有用量状态与自己的模型，
+        // 因此按实例判断，避免误伤仍在使用官方模型的那一个。
+        const model = usage.selectedModel ?? pickerModel;
+        // 官方模型保持门禁，由服务端返回真实限流错误。
+        if (model && isOfficial(model)) continue;
+        // rate_limit_reached_type 非空即视为限流（Codex 内部 Fso/zso 判定）。
+        if (status.rate_limit.limit_reached === true ||
+            status.rate_limit_reached_type != null) {
+          status.rate_limit_reached_type = null;
+          status.rate_limit.limit_reached = false;
+          status.rate_limit.allowed = true;
+          if (status.rate_limit_upsell) status.rate_limit_upsell = null;
+          changed = true;
+        }
+        // sendBlocked 由 blocked_features 派生，与 limit_reached 相互独立，
+        // 因此必须单独清除，否则发送按钮仍会保持禁用。
+        if (usage.sendBlocked === true || usage.sendBlockReason != null) {
+          usage.sendBlocked = false;
+          usage.sendBlockReason = null;
+          changed = true;
+        }
+        if (changed) {
+          state.rewrites += 1;
+          state.lastRewriteAt = Date.now();
+          if (model && !state.models.includes(model)) state.models = [...state.models, model];
+        }
+      }
+      // 发送按钮本身也要恢复可点击。
+      if (enableSendButton()) changed = true;
       // 触发一次尺寸事件，促使 React 重算提交按钮状态。
-      globalThis.dispatchEvent(new Event("resize"));
+      if (changed && state.rewrites !== state.lastDispatched) {
+        state.lastDispatched = state.rewrites;
+        globalThis.dispatchEvent(new Event("resize"));
+      }
     } catch (error) {
       state.lastError = String(error?.message ?? error);
     }
@@ -169,31 +261,33 @@ const statusExpression = `(() => {
     .filter(button => button.getAttribute('aria-label') === 'Send')
     .map(button => ({ disabled: button.disabled, ariaDisabled: button.getAttribute('aria-disabled') }));
   const root = window.__codexRoot?._internalRoot?.current;
-  let usage = null;
+  const usages = [];
   const seen = new Set();
   const walk = (node, depth) => {
-    if (!node || seen.has(node) || usage || depth > 700) return;
+    if (!node || seen.has(node) || depth > 900) return;
     seen.add(node);
     try {
       const props = node.memoizedProps;
       if (props?.usageBannerProps?.rateLimit) {
-        usage = {
+        usages.push({
           model: props.usageBannerProps.selectedModel ?? null,
           limitReached: props.usageBannerProps.rateLimit.rate_limit?.limit_reached ?? null,
+          reachedType: props.usageBannerProps.rateLimit.rate_limit_reached_type ?? null,
           sendBlocked: props.usageBannerProps.sendBlocked ?? null,
-        };
-        return;
+        });
       }
     } catch {}
     walk(node.child, depth + 1); walk(node.sibling, depth);
   };
   if (root) walk(root.child, 0);
+  const unique = [...new Map(usages.map((entry) => [JSON.stringify(entry), entry])).values()];
   return {
     installed: Boolean(state?.active),
     rewrites: state?.rewrites ?? 0,
+    models: state?.models ?? [],
     lastRewriteAt: state?.lastRewriteAt ?? 0,
     lastError: state?.lastError ?? null,
-    usage,
+    usage: unique,
     sendButtons,
   };
 })()`;
@@ -202,6 +296,9 @@ const restoreExpression = `(() => {
   globalThis[${JSON.stringify(STATE_KEY)}]?.restore?.();
   return { installed: false };
 })()`;
+
+// 判断某个页面是否已经装载观察器（用于守护进程决定是否需要重新注入）。
+const installedExpression = `Boolean(globalThis[${JSON.stringify(STATE_KEY)}]?.active)`;
 
 async function operate(expression) {
   const pages = await targets();
@@ -228,9 +325,46 @@ async function waitForComposer(deadline) {
   return false;
 }
 
+// 守护进程：持续监视页面 target，一旦发现新的（重载后的）页面缺少观察器，
+// 就重新注入。这样 Codex 崩溃重启、页面重载、多开窗口都能自动恢复。
+async function watch() {
+  console.log(`[watch] 监控 ${HOST}:${PORT}，每 ${WATCH_INTERVAL / 1000}s 检查一次；Ctrl+C 退出。`);
+  const known = new Map();
+  let stopping = false;
+  process.on("SIGINT", () => { stopping = true; });
+  process.on("SIGTERM", () => { stopping = true; });
+  while (!stopping) {
+    try {
+      const pages = await targets();
+      const seenIds = new Set();
+      for (const page of pages) {
+        seenIds.add(page.id);
+        const already = known.get(page.id);
+        if (already) continue;
+        // 新出现的页面：等待输入区就绪后注入观察器。
+        const ready = await waitForComposer(Date.now() + 15_000);
+        if (!ready) continue;
+        const result = await evaluate(page, applyExpression);
+        known.set(page.id, Date.now());
+        console.log(`[watch] 已为 ${page.id.slice(0, 8)} 安装观察器：${JSON.stringify(result)}`);
+      }
+      // 清理已消失的 target。
+      for (const id of [...known.keys()]) if (!seenIds.has(id)) known.delete(id);
+    } catch (error) {
+      // Codex 未启动时 target 列表为空属于正常情况。
+    }
+    await sleep(WATCH_INTERVAL);
+  }
+  console.log("[watch] 已退出。");
+}
+
 async function main() {
-  if (!["apply", "status", "restore"].includes(command)) {
-    throw new Error("用法：codex-unblock-third-party.mjs apply|status|restore");
+  if (!["apply", "status", "restore", "watch"].includes(command)) {
+    throw new Error("用法：codex-unblock-third-party.mjs apply|status|restore|watch");
+  }
+  if (command === "watch") {
+    await watch();
+    return;
   }
   if (command === "apply") {
     // 等待输入区渲染完成，确保观察器首次扫描就能拿到用量状态。
