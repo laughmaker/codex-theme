@@ -194,20 +194,89 @@ function installUnblock(stateKey, officialPrefixes, interval) {
     return touched;
   };
 
+  // 用量状态由 react-query 的 rate-limit-status 查询驱动。
+  // 直接改写对象字段不会通知订阅者，Codex 内部据此派生的
+  // hardBlocked 选择器仍会保持 true，发送按钮就一直是禁用的。
+  // 因此必须经由 setQueryData 写入新对象，让订阅者重新计算。
+  const RATE_LIMIT_QUERY_KEY = ["rate-limit-status"];
+
+  const findQueryClient = () => {
+    const root = globalThis.__codexRoot?._internalRoot?.current;
+    if (!root) return null;
+    const seen = new Set();
+    let client = null;
+    const walk = (node, depth) => {
+      if (!node || seen.has(node) || client || depth > 900) return;
+      seen.add(node);
+      try {
+        let ctx = node.dependencies?.firstContext;
+        let guard = 0;
+        while (ctx && guard++ < 80) {
+          const value = ctx.memoizedValue;
+          if (value && typeof value === "object" &&
+              typeof value.setQueryData === "function" &&
+              typeof value.getQueryCache === "function") {
+            client = value;
+            return;
+          }
+          ctx = ctx.next;
+        }
+      } catch { /* 忽略 */ }
+      walk(node.child, depth + 1);
+      walk(node.sibling, depth);
+    };
+    walk(root.child, 0);
+    return client;
+  };
+
+  const patchRateLimitQuery = (client) => {
+    if (!client) return false;
+    const current = client.getQueryData(RATE_LIMIT_QUERY_KEY);
+    if (!current?.rate_limit) return false;
+    // Codex 会把 hardBlocked 的结果留在 composer 的渲染闭包里，
+    // 只改字段不会让它重算，必须让订阅者收到一次通知。
+    // 因此每次都写入新的对象标识，React 才会重新渲染并刷新门禁。
+    const alreadyOpen = current.rate_limit.allowed === true &&
+      current.rate_limit.limit_reached === false &&
+      current.rate_limit_reached_type == null &&
+      current.rate_limit_upsell == null;
+    // 门禁已放开时降低写入频率，避免持续重渲染。
+    if (alreadyOpen && Date.now() - (state.lastQueryWriteAt ?? 0) < 1500) return false;
+    client.setQueryData(RATE_LIMIT_QUERY_KEY, {
+      ...current,
+      rate_limit: { ...current.rate_limit, allowed: true, limit_reached: false },
+      rate_limit_reached_type: null,
+      rate_limit_upsell: null,
+    });
+    state.lastQueryWriteAt = Date.now();
+    return true;
+  };
+
   const tick = () => {
     if (!state.active) return;
     try {
       const pickerModel = currentModel();
+      // 当前使用的模型是官方模型时不做任何改写，由服务端返回真实限流错误。
+      const usages = scanAll();
+      const targetModel = usages[0]?.selectedModel ?? pickerModel;
+      if (targetModel && isOfficial(targetModel)) {
+        state.skippedOfficial = true;
+        return;
+      }
+      state.skippedOfficial = false;
       let changed = false;
-      for (const usage of scanAll()) {
+      // 1) 放开用量状态本身
+      if (patchRateLimitQuery(findQueryClient())) {
+        changed = true;
+        state.rewrites += 1;
+        state.lastRewriteAt = Date.now();
+      }
+      // 2) usageBannerProps 上的开关（sendBlocked 与 limit_reached 相互独立）
+      for (const usage of usages) {
         const status = usage?.rateLimit;
         if (!status?.rate_limit) continue;
-        // 每个 composer 实例各自持有用量状态与自己的模型，
-        // 因此按实例判断，避免误伤仍在使用官方模型的那一个。
         const model = usage.selectedModel ?? pickerModel;
-        // 官方模型保持门禁，由服务端返回真实限流错误。
         if (model && isOfficial(model)) continue;
-        // rate_limit_reached_type 非空即视为限流（Codex 内部 Fso/zso 判定）。
         if (status.rate_limit.limit_reached === true ||
             status.rate_limit_reached_type != null) {
           status.rate_limit_reached_type = null;
@@ -216,22 +285,17 @@ function installUnblock(stateKey, officialPrefixes, interval) {
           if (status.rate_limit_upsell) status.rate_limit_upsell = null;
           changed = true;
         }
-        // sendBlocked 由 blocked_features 派生，与 limit_reached 相互独立，
-        // 因此必须单独清除，否则发送按钮仍会保持禁用。
         if (usage.sendBlocked === true || usage.sendBlockReason != null) {
           usage.sendBlocked = false;
           usage.sendBlockReason = null;
           changed = true;
         }
-        if (changed) {
-          state.rewrites += 1;
-          state.lastRewriteAt = Date.now();
-          if (model && !state.models.includes(model)) state.models = [...state.models, model];
-        }
       }
-      // 发送按钮本身也要恢复可点击。
+      if (targetModel && !state.models.includes(targetModel)) {
+        state.models = [...state.models, targetModel];
+      }
+      // 3) 发送按钮本身也要恢复可点击
       if (enableSendButton()) changed = true;
-      // 触发一次尺寸事件，促使 React 重算提交按钮状态。
       if (changed && state.rewrites !== state.lastDispatched) {
         state.lastDispatched = state.rewrites;
         globalThis.dispatchEvent(new Event("resize"));

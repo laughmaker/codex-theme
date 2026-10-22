@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-22（第二次修正：找到真正的门禁）
+
+- 定位到发送按钮真正被禁用的位置：`Xht` 组件里的 `Ct = Q(MVe, yt)`，即 `Aco`/`jco` 限流硬阻塞选择器；它由 `rate_limit.allowed === false` 派生，**禁用时不设置 `submitBlockReason`**，所以按钮变灰但没有任何提示文案。
+- 关键修正：此前直接在 `usageBannerProps.rateLimit` 对象上改字段无效——那只是缓存里的一份引用，Codex 内部的选择器不会重新计算。
+- 改为通过 React Query 的 `setQueryData(["rate-limit-status"])` 写入新的对象标识：`allowed: true`、`limit_reached: false`、`rate_limit_reached_type: null`、`rate_limit_upsell: null`。订阅者收到通知后才会重算 `hardBlocked`。
+- 由于 Codex 会把 `hardBlocked` 结果留在 composer 的渲染闭包里，单次写入会被后续重绘覆盖，因此每 1.5 秒重新写入一次以保持门禁放开。
+- 实测（Codex 26.1013.40934）：切入 `workbuddy/glm-5.3` 后 `Pht.submitDisabled` 由 `true` 稳定变为 `false`、`Ntt.submitDisabled` 同步为 `false`、`submitBlockReason` 只剩正常的 `empty-message`；连续 24 秒三次采样保持稳定；渲染进程 CPU 约 9%。
+- 切回官方模型（`gpt-*`）时不写入任何改动，仍由服务端返回真实限流错误。
+- 仍未解决的外部问题：本机 `chatgpt.com` 不可达、Codex 后端 `4.78.139.50:443` 连接被拒，`durable` 主机持续重连失败，与限流无关；同时段经 magpie 直连 `workbuddy/glm-5.3` 返回正常。
+
 ## 2026-10-22
 
 - 修正 `script/codex-unblock-third-party.mjs` 的两个问题，使其能正确处理多 composer 与整套限流字段。
