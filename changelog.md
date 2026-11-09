@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.0.0 - 2026-11-09
+
+- 去掉 Codex 工作区外框的两条「边框线」：主内容区顶部的横线，以及侧边栏里那条从标题栏贯穿到底的竖线。改动只有 `codex-theme.mjs` 的 `themeCss` 一处。
+- 根因：两条线其实是同一个元素画的。Codex 的页面容器 `PageSurface-g2Llyi` 带 `box-shadow: 0 0 0 0.5px rgba(252,252,252,.06)` 加 `0 4px 16px rgba(0,0,0,.05)`，那圈 0.5px 描边就是顶部横线；它的左边缘在 x=52px，而侧边栏背景是半透明的，这条左边缘就透过侧边栏显示成一条竖线。
+- 修复：把描边层去掉、保留柔和的投影——`[class*="PageSurface-"], [class*="_PageSurface_"] { box-shadow:0 4px 16px 0 rgba(0,0,0,.05) !important; }`。原来那条 `[data-app-shell-workspace-row] > [class*="_PageSurface_"]` 选择器已经失效（类名里没有下划线），所以一直没生效。
+- 实测：CDP 截图逐像素比对，顶部 y=87 处与侧边栏 x=103 处那两条 1px 亮线消失，界面其余部分（含磨砂侧边栏、壁纸、圆角投影）无变化；`node codex-theme.mjs apply` 后主窗口与分离窗口均 `applied: true`。
+- 未验证：浅色模式下的视觉（本次为深色模式截图）；Codex 升级后 `PageSurface-` 类名是否仍带这圈描边。
+
 ## 2026-10-29
 
 - 修复浅色模式侧边栏「看不清」的问题，改动集中在 `codex-theme.mjs` 的 `themeCss`，仅作用于 `[data-theme="light"]`，深色模式样式未改。

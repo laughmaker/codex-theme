@@ -236,7 +236,10 @@ aside.app-shell-left-panel .text-default { color:rgba(252,252,252,.68) !importan
 [data-theme="light"] aside.app-shell-left-panel [data-app-action-sidebar-project-row][data-selected] { background-color:rgba(26,28,31,.10) !important; }
 /* The sidebar and the white main surface are the same value in light mode, so keep a hairline between them. */
 [data-theme="light"] [data-app-shell-frame]::before { box-shadow:inset -1px 0 0 rgba(26,28,31,.10); }
-[data-app-shell-workspace-row] > [class*="_PageSurface_"] { box-shadow:none !important; }
+/* The app outlines the workspace with a 0.5px ring on the page surface. It reads as a
+   hard border: a line across the top of the workspace and a vertical hairline that
+   shows through the transparent sidebar. Keep the soft drop shadow, drop the ring. */
+[class*="PageSurface-"], [class*="_PageSurface_"] { box-shadow:0 4px 16px 0 rgba(0,0,0,.05) !important; }
 [data-app-shell-main-titlebar] > .w-px.bg-border { display:none !important; }
 [data-app-shell-main-surface] { border-left-color:transparent !important; }
 aside.app-shell-left-panel .sidebar-resize-handle-line { transform:translateX(.5px); opacity:0 !important; transition:opacity 120ms ease; }
