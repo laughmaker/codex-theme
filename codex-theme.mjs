@@ -210,7 +210,7 @@ const themeCss = `
 [data-theme="light"] { --md-text:#242424; --md-text-strong:#111; --md-text-muted:#5f6368; --md-border:rgba(0,0,0,.12); --md-border-strong:rgba(0,0,0,.2); --md-accent:#0969da; --md-accent-soft:rgba(9,105,218,.08); --md-heading-1:#c9372c; --md-heading-2:#9a5700; --md-heading-3:#006b9f; --md-heading-4:#7047a8; --md-heading-5:#147879; --md-heading-6:#626c00; --md-code-bg:#f6f8fa; --md-code-text:#244a7c; --md-table-bg:#fff; --md-table-head-bg:#f1f3f5; }
 /* One glass layer behind the title controls and sidebar prevents overlap seams. */
 :root, [data-theme="dark"] { --local-sidebar-overlay:linear-gradient(180deg, rgba(28,27,32,.947), rgba(26,31,42,.923) 48%, rgba(29,27,33,.947)); }
-[data-theme="light"] { --local-sidebar-overlay:linear-gradient(rgba(245,245,245,.927), rgba(238,242,248,.907)); }
+[data-theme="light"] { --local-sidebar-overlay:linear-gradient(rgba(248,248,250,.968), rgba(241,244,249,.955)); }
 [data-app-shell-frame] { background-color:var(--color-token-main-surface-primary) !important; }
 [data-app-shell-frame]::before { content:""; position:absolute; inset:0 auto 0 0; z-index:0; width:var(--local-sidebar-background-width, calc(var(--app-shell-navigation-rail-width, 0px) * ${SCALE})); pointer-events:none; background-image:var(--local-sidebar-overlay), __LOCAL_SIDEBAR_WALLPAPER__; background-repeat:no-repeat; background-size:100% 100%, var(--local-screen-width, 100vw) var(--local-screen-height, 100vh); background-position:0 0, var(--local-wallpaper-x, 0) var(--local-wallpaper-y, 0); -webkit-backdrop-filter:blur(30px) saturate(1.15); backdrop-filter:blur(30px) saturate(1.15); }
 /* Use the actual panel width, including fixed navigation rails on plugin pages. */
@@ -225,7 +225,17 @@ aside.app-shell-left-panel[data-slate-sidebar-peeking="true"] .sidebar-navigatio
 /* Cover both the popover bottom margin and the shell bottom gutter. */
 aside.app-shell-left-panel[data-slate-sidebar-peeking="true"] [data-slate-sidebar-content] { margin-block-end:calc(-1 * var(--spacing) / ${SCALE}) !important; border-end-start-radius:0 !important; border-end-end-radius:0 !important; }
 aside.app-shell-left-panel .text-default { color:rgba(252,252,252,.68) !important; }
-[data-theme="light"] aside.app-shell-left-panel .text-default { color:rgba(28,28,30,.68) !important; }
+/* Light mode paints sidebar labels at 49–68% ink. On the frosted surface that
+   reads as washed out, so restore full label contrast and steady the backdrop. */
+[data-theme="light"] aside.app-shell-left-panel { --color-text-secondary:rgba(20,22,25,.82); --color-text-tertiary:rgba(20,22,25,.68); --color-primary-ghost-hover:rgba(26,28,31,.07); }
+[data-theme="light"] aside.app-shell-left-panel .text-default { color:rgba(17,19,22,.94) !important; }
+/* Small row labels get one weight step; the app title keeps its native 600. */
+[data-theme="light"] aside.app-shell-left-panel .text-default:not([class*="text-heading-"]) { font-weight:500; }
+[data-theme="light"] aside.app-shell-left-panel .text-tertiary { color:rgba(20,22,26,.74) !important; font-weight:600 !important; }
+[data-theme="light"] aside.app-shell-left-panel [data-app-action-sidebar-thread-selected="true"],
+[data-theme="light"] aside.app-shell-left-panel [data-app-action-sidebar-project-row][data-selected] { background-color:rgba(26,28,31,.10) !important; }
+/* The sidebar and the white main surface are the same value in light mode, so keep a hairline between them. */
+[data-theme="light"] [data-app-shell-frame]::before { box-shadow:inset -1px 0 0 rgba(26,28,31,.10); }
 [data-app-shell-workspace-row] > [class*="_PageSurface_"] { box-shadow:none !important; }
 [data-app-shell-main-titlebar] > .w-px.bg-border { display:none !important; }
 [data-app-shell-main-surface] { border-left-color:transparent !important; }

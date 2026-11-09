@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-29
+
+- 修复浅色模式侧边栏「看不清」的问题，改动集中在 `codex-theme.mjs` 的 `themeCss`，仅作用于 `[data-theme="light"]`，深色模式样式未改。
+- 根因：Codex 原生的次要文字只有约 49% 墨色（`--color-text-tertiary: rgba(26,28,31,.495)`），而本主题此前又把侧边栏 `.text-default` 统一压成 68% 墨色，再叠加磨砂背景透出的桌面壁纸，标签与分区标题都偏灰。
+- 标签对比度：行标签改为 `rgba(17,19,22,.94)`、字重提到 500（应用名 `Codex` 标题保持原生 600），分区标题 `Projects` / `Recents` 改为 74% 墨色、字重 600。
+- 背景稳定性：浅色磨砂层不透明度由 `.927 / .907` 提到 `.968 / .955`，壁纸透出更少，侧边栏底色由上到下 226→211 的落差收窄到 240→234；在面板右缘补一条 `inset -1px 0 0 rgba(26,28,31,.10)` 发丝线，避免与白色主内容区融为一体。
+- 选中与悬停：选中会话行底色由 `rgba(26,28,31,.055)` 提到 `.10`，并在侧边栏作用域内补出 `--color-primary-ghost-hover`、`--color-text-secondary`、`--color-text-tertiary`，导航栏图标与 `Show more` 一并清晰。
+- 实测（Codex 浅色模式，CDP 截取侧边栏逐像素取背景色后按 WCAG 计算）：行标签对比度 5.2:1 → 14.3:1，分区标题 3.0:1 → 7.2:1。`node codex-theme.mjs apply` 后两个窗口均 `applied: true`、行标签 500、标题 600、选中行底色已生效。
+- 未验证：深色模式视觉（本次未切换外观，仅确认深色 CSS 规则未被修改）；Codex 升级后 `.text-tertiary`、`data-app-action-sidebar-thread-selected` 等选择器是否仍成立。
+
 ## 2026-10-22（第二次修正：找到真正的门禁）
 
 - 定位到发送按钮真正被禁用的位置：`Xht` 组件里的 `Ct = Q(MVe, yt)`，即 `Aco`/`jco` 限流硬阻塞选择器；它由 `rate_limit.allowed === false` 派生，**禁用时不设置 `submitBlockReason`**，所以按钮变灰但没有任何提示文案。
